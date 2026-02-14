@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* optional minimal aesthetic defaults */
+body {
+    font-family: Inter, system-ui, Arial, sans-serif;
+    @apply bg-slate-950 text-slate-200;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    @apply bg-slate-800 rounded-full;
+    background-image: linear-gradient(to bottom, #6366f1, #06b6d4);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-image: linear-gradient(to bottom, #4f46e5, #0891b2);
+}

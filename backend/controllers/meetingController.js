@@ -3,6 +3,7 @@ const { transcribeAudio } = require("../services/transcribeService");
 const { generateMeetingInsights } = require("../services/summaryService");
 const path = require("path");
 const fs = require("fs");
+const { meetingQueue } = require("../queue/meetingQueue");
 
 
 
@@ -14,60 +15,43 @@ exports.uploadMeeting = async (req, res) => {
             });
         }
 
-        const filePath = req.file.path.replace(/\\/g, "/");
 
         // Insert into DB
-        const query = `
-      INSERT INTO meetings (file_path)
-      VALUES (?)
-    `;
+        const meetingTitle = req.body.meeting_title || "Untitled Meeting";
+        const filePath = req.file.path.replace(/\\/g, "/");
 
-        db.run(query, [filePath], async function (err) {
-            if (err) {
-                console.error("DB insert error:", err);
-                return res.status(500).json({
-                    error: "Database error",
-                });
-            }
+        db.run(
+            `INSERT INTO meetings (meeting_title, file_path, status)
+   VALUES (?, ?, 'processing')`,
+            [meetingTitle, filePath],
+            async function (err) {
+                if (err) {
+                    console.error("DB insert error:", err);
+                    return res.status(500).json({ error: "DB error" });
+                }
 
-            const meetingId = this.lastID;
+                const meetingId = this.lastID;
 
-            try {
-                // 🔥 STEP 1 — Transcription
-                const transcript = await transcribeAudio(filePath);
-
-                // 🔥 STEP 2 — LLM Intelligence
-                const insights = await generateMeetingInsights(transcript);
-
-                // 🔥 STEP 3 — Update DB
-                db.run(
-                    `UPDATE meetings 
-     SET transcript = ?, summary = ?, action_items = ?
-     WHERE id = ?`,
-                    [
-                        transcript,
-                        insights.summary,
-                        JSON.stringify(insights.actionItems),
+                try {
+                    // 🚀 enqueue background job
+                    await meetingQueue.add("process-meeting", {
                         meetingId,
-                    ]
-                );
+                        filePath,
+                    });
 
-                res.json({
-                    message: "Meeting processed successfully",
-                    meetingId,
-                    transcript,
-                    summary: insights.summary,
-                    actionItems: insights.actionItems,
-                });
-            } catch (aiError) {
-                console.error("AI processing failed:", aiError);
-
-                res.json({
-                    message: "Meeting uploaded but AI processing failed",
-                    meetingId,
-                });
+                    // ⚡ fast response
+                    res.json({
+                        message: "Meeting uploaded and processing started",
+                        meetingId,
+                        status: "processing",
+                    });
+                } catch (queueErr) {
+                    console.error("Queue error:", queueErr);
+                    res.status(500).json({ error: "Queue failed" });
+                }
             }
-        });
+        );
+
 
     } catch (error) {
         console.error("Upload error:", error);
@@ -112,7 +96,7 @@ exports.getMeetingById = (req, res) => {
 // ===============================
 exports.getAllMeetings = (req, res) => {
     db.all(
-        `SELECT id, summary, created_at FROM meetings ORDER BY created_at DESC`,
+        `SELECT * FROM meetings`,
         [],
         (err, rows) => {
             if (err) {

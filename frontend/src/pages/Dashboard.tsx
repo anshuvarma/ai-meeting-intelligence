@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Upload, Trash2, Eye, Sparkles } from "lucide-react";
 import { meetingApi } from "../services/meetingApi";
 import { Meeting } from "../types/meeting";
@@ -11,6 +11,8 @@ export default function Dashboard() {
     const [file, setFile] = useState<File | null>(null);
     const [loading, setLoading] = useState(false);
     const [selected, setSelected] = useState<Meeting | null>(null);
+    const [isPolling, setIsPolling] = useState(false);
+    const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
     // Toast State
     const [toast, setToast] = useState<{ message: string; type: ToastType; isVisible: boolean }>({
@@ -38,11 +40,50 @@ export default function Dashboard() {
     const fetchMeetings = async () => {
         const data = await meetingApi.getAll();
         setMeetings(data);
+
+        const hasProcessing = data.some(
+            (m: Meeting) => m.status === "processing"
+        );
+
+        // 🧠 start polling if needed
+        if (hasProcessing && !isPolling) {
+            startPolling();
+        }
+
+        // 🧠 stop polling if everything done
+        if (!hasProcessing && isPolling) {
+            stopPolling();
+        }
+    };
+
+    const startPolling = () => {
+        if (pollingRef.current) return;
+
+        setIsPolling(true);
+
+        pollingRef.current = setInterval(() => {
+            fetchMeetings();
+        }, 5000);
+    };
+
+    const stopPolling = () => {
+        if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+        }
+        setIsPolling(false);
     };
 
     useEffect(() => {
         fetchMeetings();
+
+        const interval = setInterval(() => {
+            fetchMeetings();
+        }, 5000); // poll every 5 sec
+
+        return () => clearInterval(interval);
     }, []);
+
 
     const handleUpload = async () => {
         if (!file) return;
@@ -51,6 +92,8 @@ export default function Dashboard() {
             await meetingApi.upload(file);
             setFile(null);
             await fetchMeetings();
+            // 🔥 trigger polling again by forcing refresh cycle
+            setTimeout(fetchMeetings, 1000);
             showToast("Meeting uploaded and processed successfully", "success");
         } catch (error) {
             console.error("Upload failed:", error);
@@ -175,50 +218,77 @@ export default function Dashboard() {
                             <div
                                 key={m.id}
                                 className={`group relative p-5 rounded-2xl border transition-all flex flex-col justify-between h-48 shadow-sm hover:shadow-md ${gradients[i % gradients.length]} ${loading
-                                        ? "opacity-50 cursor-not-allowed grayscale pointer-events-none"
-                                        : "cursor-pointer"
+                                    ? "opacity-50 cursor-not-allowed grayscale pointer-events-none"
+                                    : "cursor-pointer"
                                     }`}
-                                onClick={() => !loading && handleView(m.id)}
+                                onClick={() =>
+                                    !loading && m.status === "completed" && handleView(m.id)
+                                }
                             >
                                 <div>
                                     <div className="flex items-center justify-between mb-3">
                                         <span className="text-xs font-semibold px-2.5 py-1 rounded-md bg-black/20 text-slate-200 border border-white/10">
                                             #{m.id}
                                         </span>
+
+                                        {/* Actions Group (View/Delete) - replaces status badge on hover */}
+                                        <div className="flex items-center gap-2">
+                                            {/* Status Badge (visible by default, hidden on hover) */}
+                                            <span
+                                                className={`group-hover:hidden text-xs px-2 py-1 rounded-md font-medium border ${m.status === "completed"
+                                                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                                                    : m.status === "failed"
+                                                        ? "bg-rose-500/10 text-rose-400 border-rose-500/30"
+                                                        : "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                                                    }`}
+                                            >
+                                                {m.status === "completed"
+                                                    ? "Completed"
+                                                    : m.status === "failed"
+                                                        ? "Failed"
+                                                        : "Processing"}
+                                            </span>
+
+                                            {/* Action Buttons (hidden by default, visible on hover) */}
+                                            <div className="hidden group-hover:flex items-center gap-2">
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (!loading) handleView(m.id);
+                                                    }}
+                                                    disabled={loading}
+                                                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 hover:border-blue-500/50 transition-all shadow-sm"
+                                                    title="View Details"
+                                                >
+                                                    <Eye size={16} />
+                                                </button>
+
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (!loading) setDeleteId(m.id);
+                                                    }}
+                                                    disabled={loading}
+                                                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-400 border border-slate-700 hover:border-rose-500/50 transition-all shadow-sm"
+                                                    title="Delete Meeting"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
+
                                     <h3 className="font-semibold text-lg text-slate-100 mb-2 leading-tight group-hover:text-white transition-colors">
                                         Meeting Recording
                                     </h3>
                                     <p className="text-sm text-slate-400 line-clamp-3 leading-relaxed group-hover:text-slate-300" >
-                                        {m.summary || "No summary available yet..."}
+                                        {m.status === "processing"
+                                            ? "AI is analyzing this meeting..."
+                                            : m.summary || "No summary available yet..."}
                                     </p>
                                 </div>
 
-                                <div className="absolute top-4 right-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity" >
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            if (!loading) handleView(m.id);
-                                        }}
-                                        disabled={loading}
-                                        className="p-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 transition-colors ring-1 ring-blue-500/20 shadow-lg backdrop-blur-sm"
-                                        title="View Details"
-                                    >
-                                        <Eye size={18} />
-                                    </button>
 
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            if (!loading) setDeleteId(m.id);
-                                        }}
-                                        disabled={loading}
-                                        className="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition-colors ring-1 ring-rose-500/20 shadow-lg backdrop-blur-sm"
-                                        title="Delete Meeting"
-                                    >
-                                        <Trash2 size={18} />
-                                    </button>
-                                </div>
                             </div>
                         ))}
 

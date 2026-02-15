@@ -5,4 +5,5 @@ export interface Meeting {
     summary?: string;
     action_items?: string[];
     created_at?: string;
+    status: "processing" | "completed" | "failed";
 }

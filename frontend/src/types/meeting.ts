@@ -1,4 +1,5 @@
 export interface Meeting {
+    file_name: any;
     id: number;
     file_path?: string;
     transcript?: string;

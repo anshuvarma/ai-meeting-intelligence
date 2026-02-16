@@ -27,7 +27,15 @@ export default function MeetingModal({ meeting, onClose }: Props) {
                         {/* Header */}
                         <div className="p-6 border-b border-[#2f3542] flex items-center justify-between shrink-0 bg-[#1a1d24] z-10">
                             <h3 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">
-                                Meeting Details
+                                {(() => {
+                                    // Format: Meeting-DD/MM/YYYY
+                                    const dateObj = meeting.created_at ? new Date(meeting.created_at) : new Date();
+                                    const day = String(dateObj.getDate()).padStart(2, '0');
+                                    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                                    const year = dateObj.getFullYear();
+
+                                    return `Meeting-${day}/${month}/${year}`;
+                                })()}
                             </h3>
                             <button
                                 onClick={onClose}

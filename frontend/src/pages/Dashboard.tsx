@@ -11,7 +11,6 @@ export default function Dashboard() {
     const [file, setFile] = useState<File | null>(null);
     const [loading, setLoading] = useState(false);
     const [selected, setSelected] = useState<Meeting | null>(null);
-    const [isPolling, setIsPolling] = useState(false);
     const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
     // Toast State
@@ -38,32 +37,36 @@ export default function Dashboard() {
     ];
 
     const fetchMeetings = async () => {
-        const data = await meetingApi.getAll();
-        setMeetings(data);
+        try {
+            const data = await meetingApi.getAll();
+            setMeetings(data);
 
-        const hasProcessing = data.some(
-            (m: Meeting) => m.status === "processing"
-        );
+            const hasProcessing = data.some(
+                (m: Meeting) => m.status === "processing"
+            );
 
-        // 🧠 start polling if needed
-        if (hasProcessing && !isPolling) {
-            startPolling();
-        }
+            // 🧠 start polling if needed
+            if (hasProcessing && !pollingRef.current) {
+                startPolling();
+            }
 
-        // 🧠 stop polling if everything done
-        if (!hasProcessing && isPolling) {
-            stopPolling();
+            // 🧠 stop polling if everything done
+            if (!hasProcessing && pollingRef.current) {
+                stopPolling();
+                showToast("Meeting uploaded and processed successfully!!!", "success");
+            }
+        } catch (error) {
+            console.error("Failed to fetch meetings:", error);
         }
     };
 
     const startPolling = () => {
         if (pollingRef.current) return;
 
-        setIsPolling(true);
-
+        // Immediately fetch once? No, fetchMeetings called it.
         pollingRef.current = setInterval(() => {
             fetchMeetings();
-        }, 5000);
+        }, 10000); // 3s might be snappier than 5s
     };
 
     const stopPolling = () => {
@@ -71,17 +74,16 @@ export default function Dashboard() {
             clearInterval(pollingRef.current);
             pollingRef.current = null;
         }
-        setIsPolling(false);
     };
 
     useEffect(() => {
         fetchMeetings();
 
-        const interval = setInterval(() => {
-            fetchMeetings();
-        }, 5000); // poll every 5 sec
-
-        return () => clearInterval(interval);
+        return () => {
+            if (pollingRef.current) {
+                clearInterval(pollingRef.current);
+            }
+        };
     }, []);
 
 
@@ -93,8 +95,8 @@ export default function Dashboard() {
             setFile(null);
             await fetchMeetings();
             // 🔥 trigger polling again by forcing refresh cycle
-            setTimeout(fetchMeetings, 1000);
-            showToast("Meeting uploaded and processed successfully", "success");
+            startPolling();
+            showToast("Meeting uploaded successfully!!!", "success");
         } catch (error) {
             console.error("Upload failed:", error);
             showToast("Failed to upload meeting. Please try again.", "error");
@@ -154,13 +156,11 @@ export default function Dashboard() {
                             onChange={(e) => {
                                 const f = e.target.files?.[0];
                                 if (f) {
+                                    if (f.size > 8 * 1024 * 1024) {
+                                        showToast("File size can't be more than 8MB", "error");
+                                        return;
+                                    }
                                     setFile(f);
-                                    // Auto upload on select for smoother UX, or state set
-                                    // For now, let's just set it and trigger upload if we want, 
-                                    // but the prompt implies a design. Let's keep the button separate or auto-upload?
-                                    // The design usually implies "drop and it goes" or "drop then click".
-                                    // Let's simplify: User clicks box -> selects file -> we show selected state -> user clicks upload.
-                                    // Actually, let's persist the 'file' state and show a different UI if file is selected.
                                 }
                             }}
                         />
@@ -228,18 +228,19 @@ export default function Dashboard() {
                                 <div>
                                     <div className="flex items-center justify-between mb-3">
                                         <span className="text-xs font-semibold px-2.5 py-1 rounded-md bg-black/20 text-slate-200 border border-white/10">
-                                            #{m.id}
+                                            #{i + 1}
                                         </span>
 
                                         {/* Actions Group (View/Delete) - replaces status badge on hover */}
                                         <div className="flex items-center gap-2">
-                                            {/* Status Badge (visible by default, hidden on hover) */}
+                                            {/* Status Badge (visible by default, hidden on hover only if actions actived) */}
                                             <span
-                                                className={`group-hover:hidden text-xs px-2 py-1 rounded-md font-medium border ${m.status === "completed"
-                                                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                                                    : m.status === "failed"
-                                                        ? "bg-rose-500/10 text-rose-400 border-rose-500/30"
-                                                        : "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                                                className={`text-xs px-2 py-1 rounded-md font-medium border ${m.status !== "processing" ? "group-hover:hidden" : ""
+                                                    } ${m.status === "completed"
+                                                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                                                        : m.status === "failed"
+                                                            ? "bg-rose-500/10 text-rose-400 border-rose-500/30"
+                                                            : "bg-amber-500/10 text-amber-400 border-amber-500/30"
                                                     }`}
                                             >
                                                 {m.status === "completed"
@@ -249,37 +250,45 @@ export default function Dashboard() {
                                                         : "Processing"}
                                             </span>
 
-                                            {/* Action Buttons (hidden by default, visible on hover) */}
-                                            <div className="hidden group-hover:flex items-center gap-2">
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        if (!loading) handleView(m.id);
-                                                    }}
-                                                    disabled={loading}
-                                                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 hover:border-blue-500/50 transition-all shadow-sm"
-                                                    title="View Details"
-                                                >
-                                                    <Eye size={16} />
-                                                </button>
+                                            {/* Action Buttons (hidden by default, visible on hover only if NOT processing) */}
+                                            {m.status !== "processing" && (
+                                                <div className="hidden group-hover:flex items-center gap-2">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            if (!loading) handleView(m.id);
+                                                        }}
+                                                        disabled={loading}
+                                                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 hover:border-blue-500/50 transition-all shadow-sm"
+                                                        title="View Details"
+                                                    >
+                                                        <Eye size={16} />
+                                                    </button>
 
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        if (!loading) setDeleteId(m.id);
-                                                    }}
-                                                    disabled={loading}
-                                                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-400 border border-slate-700 hover:border-rose-500/50 transition-all shadow-sm"
-                                                    title="Delete Meeting"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </div>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            if (!loading) setDeleteId(m.id);
+                                                        }}
+                                                        disabled={loading}
+                                                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-400 border border-slate-700 hover:border-rose-500/50 transition-all shadow-sm"
+                                                        title="Delete Meeting"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
-                                    <h3 className="font-semibold text-lg text-slate-100 mb-2 leading-tight group-hover:text-white transition-colors">
-                                        Meeting Recording
+                                    <h3 className="font-semibold text-lg text-slate-100 mb-2 leading-tight group-hover:text-white transition-colors truncate">
+                                        {(() => {
+                                            const dateObj = m.created_at ? new Date(m.created_at) : new Date();
+                                            const day = String(dateObj.getDate()).padStart(2, '0');
+                                            const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                                            const year = dateObj.getFullYear();
+                                            return `Meeting-${day}/${month}/${year}`;
+                                        })()}
                                     </h3>
                                     <p className="text-sm text-slate-400 line-clamp-3 leading-relaxed group-hover:text-slate-300" >
                                         {m.status === "processing"
